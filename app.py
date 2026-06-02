@@ -2,15 +2,17 @@ import gradio as gr
 from src.rag_chat import ask
 
 # -------------------------
-# Chat function
+# Chat function (MESSAGES FORMAT)
 # -------------------------
 def chat_fn(message, history):
+
     print("\n[DEBUG] User question:", message)
 
     answer = ask(message)
 
-    # IMPORTANT: old Gradio format
-    history.append((message, answer))
+    # convert history into correct format
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": answer})
 
     return history
 
@@ -20,19 +22,19 @@ def chat_fn(message, history):
 # -------------------------
 with gr.Blocks() as demo:
 
-    gr.Markdown("# 📄 RAG Chatbot (Document QA System)")
+    gr.Markdown("# 📄 RAG Chatbot")
 
-    chatbot = gr.Chatbot()   # ❌ no "type=" here
+    # IMPORTANT: NO type argument
+    chatbot = gr.Chatbot()
 
-    msg = gr.Textbox(placeholder="Ask anything from document...")
+    msg = gr.Textbox(placeholder="Ask something...")
 
     clear = gr.Button("Clear")
 
-    # send message
     msg.submit(chat_fn, [msg, chatbot], chatbot)
 
-    # clear chat
     clear.click(lambda: [], None, chatbot)
+
 
 # -------------------------
 # Run
