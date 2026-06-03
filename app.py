@@ -1,20 +1,34 @@
 import gradio as gr
+
 from src.rag_chat import ask
+from src.ingest import ingest_pdf
+
 
 # -------------------------
-# Chat function (MESSAGES FORMAT)
+# PDF Upload
+# -------------------------
+def upload_pdf(pdf):
+
+    if pdf is None:
+        return "Please upload a PDF."
+
+    ingest_pdf(pdf.name)
+
+    return "PDF indexed successfully."
+
+
+# -------------------------
+# Chat Function
 # -------------------------
 def chat_fn(message, history):
 
-    print("\n[DEBUG] User question:", message)
-
     answer = ask(message)
 
-    # convert history into correct format
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": answer})
+    history.append(
+        (message, answer)
+    )
 
-    return history
+    return "", history
 
 
 # -------------------------
@@ -24,16 +38,45 @@ with gr.Blocks() as demo:
 
     gr.Markdown("# 📄 RAG Chatbot")
 
-    # IMPORTANT: NO type argument
-    chatbot = gr.Chatbot()
+    with gr.Row():
 
-    msg = gr.Textbox(placeholder="Ask something...")
+        pdf_upload = gr.File(
+            label="Upload PDF",
+            file_types=[".pdf"]
+        )
 
-    clear = gr.Button("Clear")
+        index_btn = gr.Button("Index PDF")
 
-    msg.submit(chat_fn, [msg, chatbot], chatbot)
+    status = gr.Textbox(
+        label="Status"
+    )
 
-    clear.click(lambda: [], None, chatbot)
+    chatbot = gr.Chatbot(
+        height=500
+    )
+
+    msg = gr.Textbox(
+        placeholder="Ask something..."
+    )
+
+    clear = gr.Button("Clear Chat")
+
+    index_btn.click(
+        upload_pdf,
+        inputs=pdf_upload,
+        outputs=status
+    )
+
+    msg.submit(
+        chat_fn,
+        [msg, chatbot],
+        [msg, chatbot]
+    )
+
+    clear.click(
+        lambda: [],
+        outputs=chatbot
+    )
 
 
 # -------------------------
