@@ -10,7 +10,7 @@ embedding_model = HuggingFaceEmbeddings(
 )
 
 # -------------------------
-# Chroma DB
+# Load DB
 # -------------------------
 db = Chroma(
     persist_directory="db",
@@ -26,67 +26,50 @@ llm = ChatOllama(
 )
 
 # -------------------------
-# Detect Summary Query
+# Detect summary
 # -------------------------
-def is_summary_query(question):
-    q = question.lower()
-
-    keywords = [
-        "summary",
-        "summarize",
-        "summarise",
-        "overview",
-        "entire document",
-        "whole document",
-        "main idea",
-        "full report"
-    ]
-
-    return any(k in q for k in keywords)
-
+def is_summary(q):
+    q = q.lower()
+    return any(x in q for x in [
+        "summary", "summarize", "overview",
+        "entire document", "whole document"
+    ])
 
 # -------------------------
-# Get Summary Context
+# Retrieve context
 # -------------------------
-def get_summary_context():
-    all_docs = db.get()["documents"]
+def get_context(question):
+    if is_summary(question):
+        docs = db.get()["documents"]
 
-    if not all_docs:
-        return ""
+        # better spread
+        step = max(1, len(docs) // 25)
+        selected = docs[::step][:25]
 
-    # balanced coverage (not only first chunks)
-    step = max(1, len(all_docs) // 20)
-    selected = all_docs[::step]
+        return "\n\n".join(selected)
 
-    return "\n\n".join(selected)
-
-
-# -------------------------
-# Get QA Context
-# -------------------------
-def get_qa_context(question):
-    docs = db.similarity_search(question, k=8)
-
-    return "\n\n".join(doc.page_content for doc in docs)
-
+    docs = db.similarity_search(question, k=6)
+    return "\n\n".join([d.page_content for d in docs])
 
 # -------------------------
 # MAIN ASK FUNCTION
 # -------------------------
 def ask(question):
 
-    print("\n[DEBUG] Retrieving documents...")
+    print("\n[DEBUG] Question:", question)
+    print("[DEBUG] Retrieving documents...")
 
-    if is_summary_query(question):
+    context = get_context(question)
 
-        context = get_summary_context()
+    print("[DEBUG] Context length:", len(context))
+
+    if is_summary(question):
 
         prompt = f"""
-You are an expert document analyst.
+You are a document analyst.
 
-Write a clear and structured summary.
+Write a structured summary:
 
-FORMAT:
 Summary:
 Main Idea:
 Key Points:
@@ -98,14 +81,12 @@ Context:
 
     else:
 
-        context = get_qa_context(question)
-
         prompt = f"""
-You are a strict document QA assistant.
+You are a strict QA assistant.
 
 RULES:
-- Use ONLY the given context
-- If answer not present, say "Not found in document"
+- Use ONLY context
+- If missing say "Not found"
 
 Context:
 {context}
@@ -116,8 +97,4 @@ Question:
 Answer:
 """
 
-    print("[DEBUG] Context length:", len(context))
-
-    response = llm.invoke(prompt)
-
-    return response.content
+    return llm.invoke(prompt).content

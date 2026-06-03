@@ -1,40 +1,46 @@
+import shutil
+import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-import shutil
-
+DB_PATH = "db"
 
 def ingest_pdf(pdf_path):
 
-    print("Loading PDF...")
+    print("Loading PDF:", pdf_path)
 
+    # 1. Delete old DB completely
+    if os.path.exists(DB_PATH):
+        shutil.rmtree(DB_PATH)
+
+    # 2. Load PDF
     loader = PyPDFLoader(pdf_path)
     documents = loader.load()
 
+    # 3. Split into chunks
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
-        chunk_overlap=200
+        chunk_overlap=150
     )
 
     chunks = splitter.split_documents(documents)
 
-    print(f"Chunks created: {len(chunks)}")
+    print("Chunks created:", len(chunks))
 
-    embedding_model = HuggingFaceEmbeddings(
+    # 4. Embeddings
+    embedding = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    # Remove old database
-    shutil.rmtree("db", ignore_errors=True)
-
-    print("Creating embeddings...")
+    # 5. Create fresh DB
+    print("Creating vector DB...")
 
     Chroma.from_documents(
-        documents=chunks,
-        embedding=embedding_model,
-        persist_directory="db"
+        chunks,
+        embedding=embedding,
+        persist_directory=DB_PATH
     )
 
-    print("Done.")
+    print("Done indexing.")
