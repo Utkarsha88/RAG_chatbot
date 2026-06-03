@@ -1,123 +1,101 @@
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
 
-# -------------------------
-# Embedding Model
-# -------------------------
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
-# -------------------------
-# Chroma DB
-# -------------------------
-db = Chroma(
-    persist_directory="db",
-    embedding_function=embedding_model
-)
 
-# -------------------------
-# LLM
-# -------------------------
+def get_db():
+    return Chroma(
+        persist_directory="db",
+        embedding_function=embedding_model,
+        collection_name="main"
+    )
+
 llm = ChatOllama(
     model="llama3.2:3b",
     temperature=0.2
 )
 
 # -------------------------
-# Detect Summary Query
+# GET CONTEXT (DOCS + TEXT)
 # -------------------------
-def is_summary_query(question):
-    q = question.lower()
+def get_context_docs(question, k=8):
 
-    keywords = [
-        "summary",
-        "summarize",
-        "summarise",
-        "overview",
-        "entire document",
-        "whole document",
-        "main idea",
-        "full report"
-    ]
+    db = get_db()
+    docs = db.similarity_search(question, k=k)
 
-    return any(k in q for k in keywords)
+    return docs
 
+
+def get_context_text(docs):
+    return "\n\n".join(d.page_content for d in docs)
 
 # -------------------------
-# Get Summary Context
-# -------------------------
-def get_summary_context():
-    all_docs = db.get()["documents"]
-
-    if not all_docs:
-        return ""
-
-    # balanced coverage (not only first chunks)
-    step = max(1, len(all_docs) // 20)
-    selected = all_docs[::step]
-
-    return "\n\n".join(selected)
-
-
-# -------------------------
-# Get QA Context
-# -------------------------
-def get_qa_context(question):
-    docs = db.similarity_search(question, k=8)
-
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-# -------------------------
-# MAIN ASK FUNCTION
+# ASK FUNCTION
 # -------------------------
 def ask(question):
 
-    print("\n[DEBUG] Retrieving documents...")
+    print("\n[DEBUG] Question:", question)
 
-    if is_summary_query(question):
+    raw_query = (question or "").strip()
 
-        context = get_summary_context()
+    # fetch top documents (more for summaries)
+    docs = get_context_docs(raw_query, k=12)
+    context_text = get_context_text(docs)
 
+    if not context_text.strip():
+        return "No document context found. Please upload and index a PDF first."
+
+    # Debug: print brief previews of top matches
+    print("[DEBUG] Top matches previews:")
+    for i, d in enumerate(docs[:3]):
+        preview = d.page_content.replace("\n", " ")[:200]
+        print(f"  {i+1}. {preview}...")
+
+    # If the user asked for a summary, synthesize a document-level summary
+    q_lower = raw_query.lower()
+    summary_triggers = ["summarize", "summary", "summarise", "summery", "summarize the entire document", "summarize entire document"]
+    if any(t in q_lower for t in summary_triggers):
         prompt = f"""
-You are an expert document analyst.
-
-Write a clear and structured summary.
-
-FORMAT:
-Summary:
-Main Idea:
-Key Points:
-Conclusion:
+You are a concise document summarizer. Use ONLY the context below to produce a clear, structured summary of the entire document.
+Cover: objective, dataset/features, methods, key results/findings, chemicals or sensors mentioned, and main conclusions. Keep the summary under 300 words.
+If the information is not present in the context, say exactly: Not found in document.
 
 Context:
-{context}
+{context_text}
+
+Produce the summary:
 """
+        res = llm.invoke(prompt)
+        return res.content.strip()
 
+    # For very short keyword queries, ask the model to explain how the term is used
+    if len(raw_query.split()) <= 3 and not raw_query.endswith("?"):
+        prompt_question = (
+            f"Explain how the document describes or uses the term: {raw_query}. "
+            "If the term is not discussed in the context, reply exactly: Not found in document."
+        )
     else:
+        prompt_question = raw_query
 
-        context = get_qa_context(question)
+    prompt = f"""
+You are a helpful document assistant.
 
-        prompt = f"""
-You are a strict document QA assistant.
-
-RULES:
-- Use ONLY the given context
-- If answer not present, say "Not found in document"
+Use ONLY the context below to answer the question. Do not add information that is not in the context.
+If the answer is not contained in the context, respond exactly: Not found in document.
 
 Context:
-{context}
+{context_text}
 
 Question:
-{question}
+{prompt_question}
 
 Answer:
 """
 
-    print("[DEBUG] Context length:", len(context))
+    res = llm.invoke(prompt)
 
-    response = llm.invoke(prompt)
-
-    return response.content
+    return res.content.strip()
