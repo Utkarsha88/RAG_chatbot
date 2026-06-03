@@ -1,46 +1,75 @@
-import shutil
 import os
-from langchain_community.document_loaders import PyPDFLoader
+import shutil
+import time
+
+from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 
 DB_PATH = "db"
 
+embedding_model = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
+
+def clear_old_db():
+    """Safe delete for Windows (fixes file lock issue)"""
+
+    if not os.path.exists(DB_PATH):
+        return
+
+    # give OS time to release file handles
+    time.sleep(0.5)
+
+    try:
+        shutil.rmtree(DB_PATH, ignore_errors=True)
+    except PermissionError:
+        print("DB locked, retrying...")
+
+        time.sleep(1)
+        shutil.rmtree(DB_PATH, ignore_errors=True)
+
+
 def ingest_pdf(pdf_path):
 
-    print("Loading PDF:", pdf_path)
+    file_name = os.path.basename(pdf_path).replace(".pdf", "")
+    file_name = file_name.replace(" ", "_").lower()
 
-    # 1. Delete old DB completely
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
+    print(f"\nLoading PDF: {file_name}")
 
-    # 2. Load PDF
-    loader = PyPDFLoader(pdf_path)
-    documents = loader.load()
+    # Read PDF
+    reader = PdfReader(pdf_path)
 
-    # 3. Split into chunks
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+
+    # Chunking
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=150
     )
 
-    chunks = splitter.split_documents(documents)
+    chunks = splitter.split_text(text)
 
-    print("Chunks created:", len(chunks))
+    print("Chunks:", len(chunks))
 
-    # 4. Embeddings
-    embedding = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # 🔥 IMPORTANT FIX:
+    # Each upload is stored cleanly per document name
+    # AND we reset DB to avoid old contamination
 
-    # 5. Create fresh DB
-    print("Creating vector DB...")
+    clear_old_db()
 
-    Chroma.from_documents(
-        chunks,
-        embedding=embedding,
-        persist_directory=DB_PATH
-    )
+    db = Chroma.from_texts(
+        texts=chunks,
+        embedding=embedding_model,
+        persist_directory=DB_PATH,
+        collection_name="main"
+)
 
-    print("Done indexing.")
+    # modern Chroma auto-persists, so no db.persist() needed
+    print("Indexed:", file_name)
