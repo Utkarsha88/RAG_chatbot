@@ -243,6 +243,3 @@ Based on the document, the chemical used is [X], described in section [Y] as...
 
 ---
 
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
